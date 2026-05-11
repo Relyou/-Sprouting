@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Claude助手配置
+.claude/
+
+# 用户数据（数据库、偏好、备份均属个人数据）
+~/.抽芽/
+*.db
+*.db-wal
+*.db-shm
+preferences.json
+
+# IDE
+.vscode/
+.idea/
+
+# 临时/设计文件
+*.docx
+*.txt
+!requirements.txt
+
+# 系统文件
+.DS_Store
+Thumbs.db
