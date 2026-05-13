@@ -78,10 +78,12 @@ class App:
         self.root.bind("<Configure>", lambda e: self._on_configure(), add="+")
         self.main_pane.bind("<ButtonRelease-1>", lambda e: self._on_sash_release(), add="+")
 
-        # 自动保存 & 线程轮询 & 提醒检查
+        # 自动保存 & 线程轮询 & 提醒检查 & 午夜刷新
         self.root.after(AUTO_SAVE_INTERVAL, self._auto_save)
         self.root.after(100, self._poll_threads)
         self.root.after(5000, self._check_reminders)
+        self._last_refresh_date = None
+        self.root.after(30000, self._check_midnight_refresh)
 
         # 初始化数据库
         self.db.init_db()
@@ -120,6 +122,7 @@ class App:
         file_menu.add_command(label="导出数据", command=self._export_data)
         file_menu.add_command(label="导入数据", command=self._import_data)
         file_menu.add_separator()
+        file_menu.add_command(label="最小化到托盘", command=self._minimize_to_tray)
         file_menu.add_command(label="退出", command=self._quit_app)
         menubar.add_cascade(label="文件", menu=file_menu)
 
@@ -194,6 +197,21 @@ class App:
                 )
 
         self.root.after(30000, self._check_reminders)
+
+    def _check_midnight_refresh(self):
+        """每 30 秒检查是否跨天，跨天则刷新所有页面数据"""
+        from datetime import date
+        today = date.today().isoformat()
+        if self._last_refresh_date is None:
+            self._last_refresh_date = today
+        elif self._last_refresh_date != today:
+            self._last_refresh_date = today
+            for p in self.content._pages.values():
+                if hasattr(p, "_load_data"):
+                    p._load_data()
+                if hasattr(p, "refresh"):
+                    p.refresh()
+        self.root.after(30000, self._check_midnight_refresh)
 
     def _show_reminder(self, item: dict):
         """弹出提醒通知"""
@@ -387,8 +405,11 @@ class App:
             self.settings.set("sidebar_width", sash_coord[0])
 
     def _on_close_window(self):
-        """关闭窗口 → 最小化到托盘"""
-        self._minimize_to_tray()
+        """关闭窗口 → 退出应用"""
+        if self._tray_icon:
+            self._tray_icon.stop()
+            self._tray_icon = None
+        self._quit_app()
 
     def _minimize_to_tray(self):
         """隐藏窗口，显示托盘图标"""

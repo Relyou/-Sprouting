@@ -644,6 +644,10 @@ class ScheduleItemBar(tk.Frame):
             check.pack(side=tk.RIGHT, padx=(2, 6))
             self.check_label = check
             self.plus_btn = None
+        elif item.get("timer_minutes"):
+            # 计时事项不显示加号，只显示计时按钮
+            self.check_label = None
+            self.plus_btn = None
         else:
             self.check_label = None
             plus_btn = tk.Label(self._btn_frame, text="＋", font=("Segoe UI", 14, "bold"),
@@ -737,7 +741,7 @@ class ScheduleItemBar(tk.Frame):
                 bg=self.theme["card_bg"], fg=self.theme["success"],
             )
             self.check_label.pack(side=tk.RIGHT, padx=(2, 6))
-        else:
+        elif not self.item.get("timer_minutes"):
             self.plus_btn = tk.Label(
                 frame, text="＋", font=("Segoe UI", 14, "bold"),
                 bg=self.theme["card_bg"], fg=self.theme["primary"],
@@ -1322,7 +1326,7 @@ class SchedulePage(ttk.Frame):
         if w < 10:
             return
         cal_w = w - PAD_X * 2
-        cal_h = min(int(cal_w * 3 / 7), 280)
+        cal_h = min(int(cal_w * 3 / 7), 380)
         self._calendar.configure(height=cal_h)
 
     # ── 数据加载 ──

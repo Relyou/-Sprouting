@@ -66,3 +66,6 @@ python main.py
 ## 数据存储
 
 所有数据存储在 `C:/Users/~/.抽芽/data.db`（SQLite），偏好设置存储在 `~/.抽芽/preferences.json`。
+
+## 作者的话
+本软件完全使用claude完成，给AI大人跪了。

@@ -44,7 +44,7 @@ class WorkbenchPage(ttk.Frame):
 
         # ── 左侧：自律事项 ──
         left_frame = ttk.Frame(content, style="TFrame")
-        content.add(left_frame, width=400, minsize=280)
+        content.add(left_frame, width=500, minsize=320)
 
         left_header = ttk.Frame(left_frame, style="TFrame")
         left_header.pack(fill=tk.X, pady=(0, GAP))
@@ -188,16 +188,32 @@ class WorkbenchPage(ttk.Frame):
                               bg=bg, fg=name_fg, anchor=tk.W)
         name_label.pack(anchor=tk.W)
 
-        desc = item.get("description", "")
-        if desc:
-            tk.Label(info, text=desc, font=FONT_CAPTION,
-                     bg=bg, fg=self.theme["text_secondary"],
-                     anchor=tk.W, wraplength=280,
-                     ).pack(anchor=tk.W, pady=(2, 0))
-
-        # 右侧区域
+        # 右侧区域（先创建，描述折叠按钮可能需要引用它）
         right_area = tk.Frame(bar, bg=bg)
         right_area.pack(side=tk.RIGHT, padx=(8, 8), pady=6)
+
+        desc = item.get("description", "")
+        if desc:
+            desc_row = tk.Frame(info, bg=bg)
+            desc_row.pack(anchor=tk.W, pady=(2, 0), fill=tk.X)
+
+            # 折叠三角（描述左上角，位置固定不变）
+            toggle_btn = tk.Label(desc_row, text="▶", font=("Segoe UI", 10),
+                                 bg=bg, fg=self.theme["text_secondary"],
+                                 cursor="hand2", padx=0, pady=0)
+            toggle_btn.pack(side=tk.LEFT, anchor=tk.NW)
+
+            short_desc = self._shorten_desc(desc)
+            desc_label = tk.Label(desc_row, text=short_desc, font=FONT_CAPTION,
+                                 bg=bg, fg=self.theme["text_secondary"],
+                                 anchor=tk.W, wraplength=300,
+                                 justify=tk.LEFT)
+            desc_label.pack(side=tk.LEFT, anchor=tk.NW, fill=tk.X, expand=True)
+            desc_label._full_text = desc
+            desc_label._collapsed = True
+
+            toggle_btn.bind("<Button-1>",
+                           lambda e, dl=desc_label, tb=toggle_btn: self._toggle_desc(dl, tb))
 
         # 进度
         current = item["current_count"]
@@ -210,7 +226,7 @@ class WorkbenchPage(ttk.Frame):
         if timer_minutes:
             start_btn = tk.Label(right_area, text="▶ 开始", font=FONT_CAPTION,
                                  bg=self.theme["primary"], fg="#FFFFFF",
-                                 padx=10, pady=2, cursor="hand2")
+                                 padx=12, pady=3, cursor="hand2")
             start_btn.pack(side=tk.LEFT, padx=(0, 8))
             start_btn.bind("<Button-1>",
                            lambda e, iid=item["id"], tm=timer_minutes:
@@ -506,6 +522,25 @@ class WorkbenchPage(ttk.Frame):
 
     def on_new(self):
         pass
+
+    @staticmethod
+    def _shorten_desc(text: str, max_chars: int = 60) -> str:
+        """截断描述文本到约两行"""
+        if len(text) <= max_chars:
+            return text
+        return text[:max_chars] + "..."
+
+    def _toggle_desc(self, desc_label: tk.Label, toggle_btn: tk.Label):
+        """切换描述文本的折叠/展开"""
+        if desc_label._collapsed:
+            desc_label.configure(text=desc_label._full_text)
+            toggle_btn.configure(text="▼")
+            desc_label._collapsed = False
+        else:
+            short = self._shorten_desc(desc_label._full_text)
+            desc_label.configure(text=short)
+            toggle_btn.configure(text="▶")
+            desc_label._collapsed = True
 
     def apply_theme(self, theme: dict):
         self.theme = theme
