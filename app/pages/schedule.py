@@ -55,14 +55,23 @@ class ScheduleDialog(tk.Toplevel):
     """新建或编辑自律事项"""
 
     def __init__(self, parent, theme: dict, edit_data: dict | None = None,
-                 labels: list[dict] | None = None):
+                 labels: list[dict] | None = None, parent_id: int | None = None,
+                 is_subtask: bool = False, is_composite: bool = False):
         super().__init__(parent)
         self.theme = theme
         self.result: dict | None = None
         self._edit_data = edit_data
         self._labels = labels or []
+        self._parent_id = parent_id
+        self._is_subtask = is_subtask
+        self._is_composite = is_composite
 
-        self.title("编辑事项" if edit_data else "新建事项")
+        if edit_data:
+            self.title("编辑事项")
+        elif is_subtask:
+            self.title("新建子事项")
+        else:
+            self.title("新建事项")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
@@ -85,6 +94,18 @@ class ScheduleDialog(tk.Toplevel):
         name_entry.pack(fill=tk.X, padx=16, pady=(0, 6))
         name_entry.focus_set()
 
+        # ── 复合事项（仅新建顶层事项时显示） ──
+        show_composite_cb = (not self._edit_data and not self._is_subtask and not self._is_composite)
+        self._composite_var = tk.BooleanVar(value=self._is_composite)
+        self._detail_frame = None  # 存放刷新/目标/计时/最大完成次数的容器
+
+        if show_composite_cb:
+            comp_row = tk.Frame(self, bg=bg)
+            comp_row.pack(fill=tk.X, padx=16, pady=(0, 6))
+            ttk.Checkbutton(comp_row, text="复合事项（包含子事项）",
+                           variable=self._composite_var,
+                           command=self._on_composite_toggle).pack(side=tk.LEFT)
+
         # ── 描述 ──
         ttk.Label(self, text="描述（可选）", background=bg).pack(anchor=tk.W, **pad)
         self._desc_text = tk.Text(self, height=2, width=36, font=FONT_SANS,
@@ -94,8 +115,14 @@ class ScheduleDialog(tk.Toplevel):
         if self._edit_data and self._edit_data.get("description"):
             self._desc_text.insert("1.0", self._edit_data["description"])
 
+        # ── 详细设置容器（刷新/目标/计时/最大完成次数，复合事项时隐藏） ──
+        self._detail_frame = tk.Frame(self, bg=bg)
+        self._detail_frame.pack(fill=tk.X, padx=0, pady=(0, 0))
+
+        df = self._detail_frame  # 简写
+
         # ── 刷新类型 + 间隔 ──
-        row1 = tk.Frame(self, bg=bg)
+        row1 = tk.Frame(df, bg=bg)
         row1.pack(fill=tk.X, padx=16, pady=(0, 6))
 
         ttk.Label(row1, text="刷新", background=bg).pack(side=tk.LEFT)
@@ -114,12 +141,13 @@ class ScheduleDialog(tk.Toplevel):
         self._interval_spin = ttk.Spinbox(row1, from_=1, to=30, textvariable=self._interval_var,
                                           width=5, state="readonly")
         self._interval_spin.pack(side=tk.LEFT, padx=4)
-        ttk.Label(row1, text="天", background=bg).pack(side=tk.LEFT)
+        self._unit_label = ttk.Label(row1, text="天", background=bg)
+        self._unit_label.pack(side=tk.LEFT)
 
         type_cb.bind("<<ComboboxSelected>>", self._on_type_changed)
 
         # ── 目标计数 ──
-        row2 = tk.Frame(self, bg=bg)
+        row2 = tk.Frame(df, bg=bg)
         row2.pack(fill=tk.X, padx=16, pady=(0, 6))
 
         ttk.Label(row2, text="目标次数", background=bg).pack(side=tk.LEFT)
@@ -132,7 +160,7 @@ class ScheduleDialog(tk.Toplevel):
                   background=bg, font=FONT_CAPTION).pack(side=tk.LEFT)
 
         # ── 计时 ──
-        row_timer = tk.Frame(self, bg=bg)
+        row_timer = tk.Frame(df, bg=bg)
         row_timer.pack(fill=tk.X, padx=16, pady=(0, 6))
 
         self._timer_var = tk.BooleanVar(value=False)
@@ -153,7 +181,7 @@ class ScheduleDialog(tk.Toplevel):
         self._on_timer_toggle()  # 初始化状态
 
         # ── 最大完成次数 ──
-        row_max = tk.Frame(self, bg=bg)
+        row_max = tk.Frame(df, bg=bg)
         row_max.pack(fill=tk.X, padx=16, pady=(0, 6))
 
         self._max_comp_var = tk.BooleanVar(value=False)
@@ -175,47 +203,53 @@ class ScheduleDialog(tk.Toplevel):
                   font=FONT_CAPTION).pack(side=tk.LEFT)
         self._on_max_comp_toggle()
 
-        # ── 标记图标 ──
-        ttk.Label(self, text="标记图标", background=bg).pack(anchor=tk.W, **pad)
-        row3 = tk.Frame(self, bg=bg)
-        row3.pack(fill=tk.X, padx=16, pady=(0, 6))
+        # ── 标记图标（子事项不需要） ──
+        if not self._is_subtask:
+            ttk.Label(self, text="标记图标", background=bg).pack(anchor=tk.W, **pad)
+            row3 = tk.Frame(self, bg=bg)
+            row3.pack(fill=tk.X, padx=16, pady=(0, 6))
 
-        default_icon = self._edit_data.get("mark_icon", "★") if self._edit_data else "★"
-        self._icon_var = tk.StringVar(value=default_icon)
-        self._icon_btns = []
-        for icon in MARK_ICONS:
-            is_selected = (icon == self._icon_var.get())
-            btn = tk.Label(row3, text=icon, font=("Segoe UI", 14),
-                           bg=self.theme["primary"] if is_selected else self.theme["card_bg"],
-                           fg="#FFFFFF" if is_selected else self.theme["text"],
-                           padx=4, pady=1, cursor="hand2",
-                           relief="solid" if is_selected else "flat",
-                           borderwidth=1)
-            btn.pack(side=tk.LEFT, padx=1)
-            btn.bind("<Button-1>", lambda e, i=icon: self._select_icon(i))
-            self._icon_btns.append((btn, icon))
+            default_icon = self._edit_data.get("mark_icon", "★") if self._edit_data else "★"
+            self._icon_var = tk.StringVar(value=default_icon)
+            self._icon_btns = []
+            for icon in MARK_ICONS:
+                is_selected = (icon == self._icon_var.get())
+                btn = tk.Label(row3, text=icon, font=("Segoe UI", 14),
+                               bg=self.theme["primary"] if is_selected else self.theme["card_bg"],
+                               fg="#FFFFFF" if is_selected else self.theme["text"],
+                               padx=4, pady=1, cursor="hand2",
+                               relief="solid" if is_selected else "flat",
+                               borderwidth=1)
+                btn.pack(side=tk.LEFT, padx=1)
+                btn.bind("<Button-1>", lambda e, i=icon: self._select_icon(i))
+                self._icon_btns.append((btn, icon))
 
-        # ── 标记颜色 ──
-        ttk.Label(self, text="标记颜色", background=bg).pack(anchor=tk.W, **pad)
-        row4 = tk.Frame(self, bg=bg)
-        row4.pack(fill=tk.X, padx=16, pady=(0, 12))
+            # ── 标记颜色 ──
+            ttk.Label(self, text="标记颜色", background=bg).pack(anchor=tk.W, **pad)
+            row4 = tk.Frame(self, bg=bg)
+            row4.pack(fill=tk.X, padx=16, pady=(0, 12))
 
-        default_color = self._edit_data.get("mark_color", "#3B82F6") if self._edit_data else "#3B82F6"
-        self._color_var = tk.StringVar(value=default_color)
-        self._color_btns = []
-        for color in MARK_COLORS:
-            is_selected = (color == self._color_var.get())
-            size = 26 if is_selected else 22
-            btn = tk.Label(row4, text="", bg=color, width=3, height=1,
-                           relief="solid" if is_selected else "flat",
-                           borderwidth=2, cursor="hand2",
-                           highlightbackground=color,
-                           highlightthickness=2 if is_selected else 0)
-            btn.pack(side=tk.LEFT, padx=3)
-            btn.bind("<Button-1>", lambda e, c=color: self._select_color(c))
-            # 保持 label 尺寸稳定
-            btn.place_configure
-            self._color_btns.append((btn, color))
+            default_color = self._edit_data.get("mark_color", "#3B82F6") if self._edit_data else "#3B82F6"
+            self._color_var = tk.StringVar(value=default_color)
+            self._color_btns = []
+            for color in MARK_COLORS:
+                is_selected = (color == self._color_var.get())
+                size = 26 if is_selected else 22
+                btn = tk.Label(row4, text="", bg=color, width=3, height=1,
+                               relief="solid" if is_selected else "flat",
+                               borderwidth=2, cursor="hand2",
+                               highlightbackground=color,
+                               highlightthickness=2 if is_selected else 0)
+                btn.pack(side=tk.LEFT, padx=3)
+                btn.bind("<Button-1>", lambda e, c=color: self._select_color(c))
+                # 保持 label 尺寸稳定
+                btn.place_configure
+                self._color_btns.append((btn, color))
+        else:
+            self._icon_var = tk.StringVar(value="★")
+            self._color_var = tk.StringVar(value="#3B82F6")
+            self._icon_btns = []
+            self._color_btns = []
 
         # ── 标签分类 ──
         ttk.Label(self, text="标签分类", background=bg).pack(anchor=tk.W, **pad)
@@ -239,12 +273,23 @@ class ScheduleDialog(tk.Toplevel):
         label_cb.pack(side=tk.LEFT)
         label_cb.bind("<<ComboboxSelected>>", self._on_label_selected)
 
+        # 初始状态：编辑复合事项时隐藏详细设置
+        if self._is_composite:
+            self._detail_frame.pack_forget()
+
         # ── 按钮 ──
         btn_row = tk.Frame(self, bg=bg)
         btn_row.pack(fill=tk.X, padx=16, pady=(0, 16))
 
         ttk.Button(btn_row, text="取消", command=self.destroy).pack(side=tk.RIGHT, padx=(GAP, 0))
         ttk.Button(btn_row, text="确定", command=self._on_confirm).pack(side=tk.RIGHT)
+
+    def _on_composite_toggle(self):
+        if self._composite_var.get():
+            self._detail_frame.pack_forget()
+        else:
+            self._detail_frame.pack(fill=tk.X, padx=0, pady=(0, 0),
+                                    after=self._desc_text)
 
     def _on_type_changed(self, event=None):
         t = self._type_var.get()
@@ -254,10 +299,7 @@ class ScheduleDialog(tk.Toplevel):
         if self._interval_var.get() > hi:
             self._interval_var.set(hi)
         unit = {"daily": "天", "weekly": "周", "monthly": "月"}[t]
-        # 更新单位标签
-        for child in self._interval_spin.master.winfo_children():
-            if isinstance(child, ttk.Label) and child.cget("text") in ("天", "周", "月"):
-                child.configure(text=unit)
+        self._unit_label.configure(text=unit)
 
     def _select_icon(self, icon: str):
         self._icon_var.set(icon)
@@ -309,19 +351,35 @@ class ScheduleDialog(tk.Toplevel):
             return
 
         label_id = self._label_id_var.get()
-        timer_minutes = self._timer_minutes_var.get() if self._timer_var.get() else None
-        max_completions = self._max_comp_spin_var.get() if self._max_comp_var.get() else None
+        is_composite = self._composite_var.get() if hasattr(self, '_composite_var') else False
+
+        if is_composite:
+            # 复合事项：只保存描述/图标/颜色/标签
+            timer_minutes = None
+            max_completions = None
+            refresh_type = "daily"
+            refresh_interval = 1
+            target_count = 1
+        else:
+            timer_minutes = self._timer_minutes_var.get() if self._timer_var.get() else None
+            max_completions = self._max_comp_spin_var.get() if self._max_comp_var.get() else None
+            refresh_type = self._type_var.get()
+            refresh_interval = self._interval_var.get()
+            target_count = self._target_var.get()
+
         self.result = {
             "name": name,
             "description": self._desc_text.get("1.0", tk.END).strip(),
-            "refresh_type": self._type_var.get(),
-            "refresh_interval": self._interval_var.get(),
-            "target_count": self._target_var.get(),
+            "refresh_type": refresh_type,
+            "refresh_interval": refresh_interval,
+            "target_count": target_count,
             "mark_icon": self._icon_var.get(),
             "mark_color": self._color_var.get(),
             "label_id": label_id if label_id else None,
             "timer_minutes": timer_minutes,
             "max_completions": max_completions,
+            "parent_id": self._parent_id,
+            "is_composite": 1 if is_composite else 0,
         }
         self.destroy()
 
@@ -555,13 +613,16 @@ class LabelManagerDialog(tk.Toplevel):
 # ═══════════════════════════════════════════
 
 class ScheduleItemBar(tk.Frame):
-    """单条自律事项横条"""
+    """单条自律事项横条（普通 / 复合父事项 / 子事项）"""
 
     def __init__(self, parent, item: dict, theme: dict,
                  on_increment=None, on_edit=None, on_delete=None, on_reset=None,
-                 on_start_timer=None, on_undo=None, on_archive=None):
+                 on_start_timer=None, on_undo=None, on_archive=None,
+                 on_add_subtask=None, is_child: bool = False,
+                 children_count: int = 0, children_done: int = 0):
+        indent = 20 if is_child else 8
         super().__init__(parent, bg=theme["card_bg"], cursor="hand2",
-                         highlightthickness=0, padx=8, pady=6)
+                         highlightthickness=0)
         self.theme = theme
         self.item = item
         self._on_increment = on_increment
@@ -571,19 +632,28 @@ class ScheduleItemBar(tk.Frame):
         self._on_start_timer = on_start_timer
         self._on_undo = on_undo
         self._on_archive = on_archive
+        self._on_add_subtask = on_add_subtask
+        self._is_child = is_child
+        self._children_count = children_count
+        self._children_done = children_done
+
+        # 缩进
+        self._indent = tk.Frame(self, bg=theme["card_bg"], width=indent)
+        self._indent.pack(side=tk.LEFT, fill=tk.Y)
+        self._indent.pack_propagate(False)
+        self._indent.configure(height=28)
 
         self._build()
         self._bind_events()
 
     def _build(self):
         item = self.item
-        target = item["target_count"]
-        current = item["current_count"]
         is_done = item.get("is_completed", 0)
         mark_icon = item.get("mark_icon", "★")
         mark_color = item.get("mark_color", "#3B82F6")
         label_color = item.get("label_color", "")
         strip_color = label_color if label_color else self.theme["text_secondary"]
+        is_composite = self._children_count > 0 or item.get("is_composite")
 
         # 左侧标签色条
         strip = tk.Frame(self, bg=strip_color, width=4)
@@ -606,7 +676,7 @@ class ScheduleItemBar(tk.Frame):
         name_label.pack(side=tk.LEFT, padx=(0, 8))
         self.name_label = name_label
 
-        # 进度条（Canvas）
+        # 进度条 / 计数
         progress_w = 140
         progress_h = 12
         progress_canvas = tk.Canvas(self, width=progress_w, height=progress_h,
@@ -616,29 +686,44 @@ class ScheduleItemBar(tk.Frame):
         self.progress_canvas = progress_canvas
         self._progress_w = progress_w
         self._progress_h = progress_h
-        self._draw_progress(current, target)
 
-        # 计数文字
-        count_text = f"{current}/{target}"
+        if is_composite:
+            self._draw_progress(self._children_done, self._children_count)
+            count_text = f"{self._children_done}/{self._children_count}"
+        else:
+            target = item["target_count"]
+            current = item["current_count"]
+            self._draw_progress(current, target)
+            count_text = f"{current}/{target}"
+
         count_label = tk.Label(self, text=count_text, font=FONT_MONO,
                                bg=self.theme["card_bg"], fg=self.theme["text"], width=6)
         count_label.pack(side=tk.LEFT, padx=(0, 8))
         self.count_label = count_label
 
-        # 完成勾 / + 按钮 / ▶ 计时按钮
+        # 完成勾 / + 按钮 / ▶ 计时按钮 / 子事项按钮
         self._btn_frame = tk.Frame(self, bg=self.theme["card_bg"])
         self._btn_frame.pack(side=tk.RIGHT)
 
         self._timer_btn = None
-        if not is_done and item.get("timer_minutes"):
-            timer_btn = tk.Label(self._btn_frame, text="▶", font=("Segoe UI", 12, "bold"),
-                                 bg=self.theme["card_bg"], fg=self.theme["success"],
-                                 cursor="hand2", padx=3)
-            timer_btn.pack(side=tk.RIGHT, padx=(0, 4))
-            timer_btn.bind("<Button-1>", lambda e: self._on_start_timer_click())
-            self._timer_btn = timer_btn
+        self._subtask_btn = None
 
-        if is_done:
+        if is_composite:
+            # 复合父事项：始终显示子事项添加按钮
+            self.check_label = None
+            self.plus_btn = None
+            if is_done:
+                check = tk.Label(self._btn_frame, text="✓", font=("Segoe UI", 14, "bold"),
+                                 bg=self.theme["card_bg"], fg=self.theme["success"])
+                check.pack(side=tk.RIGHT, padx=(2, 6))
+                self.check_label = check
+            subtask_btn = tk.Label(self._btn_frame, text="＋子事项", font=("Segoe UI", 11, "bold"),
+                                   bg=self.theme["card_bg"], fg=self.theme["primary"],
+                                   cursor="hand2", padx=4)
+            subtask_btn.pack(side=tk.RIGHT)
+            subtask_btn.bind("<Button-1>", lambda e: self._on_add_subtask_click())
+            self._subtask_btn = subtask_btn
+        elif is_done:
             check = tk.Label(self._btn_frame, text="✓", font=("Segoe UI", 14, "bold"),
                              bg=self.theme["card_bg"], fg=self.theme["success"])
             check.pack(side=tk.RIGHT, padx=(2, 6))
@@ -648,6 +733,12 @@ class ScheduleItemBar(tk.Frame):
             # 计时事项不显示加号，只显示计时按钮
             self.check_label = None
             self.plus_btn = None
+            timer_btn = tk.Label(self._btn_frame, text="▶", font=("Segoe UI", 12, "bold"),
+                                 bg=self.theme["card_bg"], fg=self.theme["success"],
+                                 cursor="hand2", padx=3)
+            timer_btn.pack(side=tk.RIGHT, padx=(0, 4))
+            timer_btn.bind("<Button-1>", lambda e: self._on_start_timer_click())
+            self._timer_btn = timer_btn
         else:
             self.check_label = None
             plus_btn = tk.Label(self._btn_frame, text="＋", font=("Segoe UI", 14, "bold"),
@@ -684,6 +775,10 @@ class ScheduleItemBar(tk.Frame):
         if self._on_increment:
             self._on_increment(self.item["id"])
 
+    def _on_add_subtask_click(self):
+        if self._on_add_subtask:
+            self._on_add_subtask(self.item["id"])
+
     def _bind_events(self):
         if self.plus_btn:
             self.plus_btn.bind("<Enter>",
@@ -701,8 +796,12 @@ class ScheduleItemBar(tk.Frame):
                        activeforeground="#FFFFFF")
         menu.add_command(label="编辑", command=lambda: self._on_edit and self._on_edit(self.item["id"]))
         menu.add_command(label="重置计数", command=lambda: self._on_reset and self._on_reset(self.item["id"]))
-        if self.item.get("is_completed"):
+        if self.item.get("is_composite") and not self.item.get("is_completed"):
+            menu.add_command(label="添加子事项", command=lambda: self._on_add_subtask and self._on_add_subtask(self.item["id"]))
+        if self.item.get("is_completed") and self._children_count == 0:
             menu.add_command(label="撤销完成", command=lambda: self._on_undo and self._on_undo(self.item["id"]))
+            menu.add_command(label="永久完成", command=lambda: self._on_archive and self._on_archive(self.item["id"]))
+        elif self.item.get("is_completed") and (self._children_count > 0 or self.item.get("is_composite")):
             menu.add_command(label="永久完成", command=lambda: self._on_archive and self._on_archive(self.item["id"]))
         menu.add_separator()
         menu.add_command(label="删除", command=lambda: self._on_delete and self._on_delete(self.item["id"]))
@@ -719,13 +818,31 @@ class ScheduleItemBar(tk.Frame):
         if self._timer_btn:
             self._timer_btn.destroy()
             self._timer_btn = None
+        if self._subtask_btn:
+            self._subtask_btn.destroy()
+            self._subtask_btn = None
 
         frame = self._btn_frame
         for w in frame.winfo_children():
             w.destroy()
 
-        # 计时按钮
-        if not is_done and self.item.get("timer_minutes"):
+        is_composite = self._children_count > 0 or self.item.get("is_composite")
+
+        if is_composite:
+            if is_done:
+                self.check_label = tk.Label(
+                    frame, text="✓", font=("Segoe UI", 14, "bold"),
+                    bg=self.theme["card_bg"], fg=self.theme["success"],
+                )
+                self.check_label.pack(side=tk.RIGHT, padx=(2, 6))
+            self._subtask_btn = tk.Label(
+                frame, text="＋子事项", font=("Segoe UI", 11, "bold"),
+                bg=self.theme["card_bg"], fg=self.theme["primary"],
+                cursor="hand2", padx=4,
+            )
+            self._subtask_btn.pack(side=tk.RIGHT)
+            self._subtask_btn.bind("<Button-1>", lambda e: self._on_add_subtask_click())
+        elif not is_done and self.item.get("timer_minutes"):
             self._timer_btn = tk.Label(
                 frame, text="▶", font=("Segoe UI", 12, "bold"),
                 bg=self.theme["card_bg"], fg=self.theme["success"],
@@ -734,14 +851,13 @@ class ScheduleItemBar(tk.Frame):
             self._timer_btn.pack(side=tk.RIGHT, padx=(0, 4))
             self._timer_btn.bind("<Button-1>",
                                  lambda e: self._on_start_timer_click())
-        # 完成勾 / + 按钮
-        if is_done:
+        elif is_done:
             self.check_label = tk.Label(
                 frame, text="✓", font=("Segoe UI", 14, "bold"),
                 bg=self.theme["card_bg"], fg=self.theme["success"],
             )
             self.check_label.pack(side=tk.RIGHT, padx=(2, 6))
-        elif not self.item.get("timer_minutes"):
+        elif not self.item.get("timer_minutes") or self._is_child:
             self.plus_btn = tk.Label(
                 frame, text="＋", font=("Segoe UI", 14, "bold"),
                 bg=self.theme["card_bg"], fg=self.theme["primary"],
@@ -754,11 +870,11 @@ class ScheduleItemBar(tk.Frame):
             self.plus_btn.bind("<Leave>",
                                lambda e: self.plus_btn.configure(fg=self.theme["primary"]))
 
-    def update_item(self, item: dict):
+    def update_item(self, item: dict, children_count: int = 0, children_done: int = 0):
         """从外部更新 item 数据并刷新显示（不重建 widget）"""
         self.item = item
-        current = item["current_count"]
-        target = item["target_count"]
+        self._children_count = children_count
+        self._children_done = children_done
         is_done = item.get("is_completed", 0)
 
         # 更新标签色条
@@ -774,8 +890,14 @@ class ScheduleItemBar(tk.Frame):
         )
         self.icon_label.configure(text=item.get("mark_icon", "★"),
                                   fg=item.get("mark_color", "#3B82F6"))
-        self.count_label.configure(text=f"{current}/{target}")
-        self._draw_progress(current, target)
+
+        if children_count > 0 or item.get("is_composite"):
+            self.count_label.configure(text=f"{children_done}/{children_count}")
+            self._draw_progress(children_done, children_count)
+        else:
+            self.count_label.configure(
+                text=f"{item['current_count']}/{item['target_count']}")
+            self._draw_progress(item["current_count"], item["target_count"])
 
         # 处理 + 按钮和 ✓ 的切换（重建右侧按钮区）
         self._rebuild_action_button(is_done)
@@ -783,6 +905,7 @@ class ScheduleItemBar(tk.Frame):
     def apply_theme(self, theme: dict):
         self.theme = theme
         self.configure(bg=theme["card_bg"])
+        self._indent.configure(bg=theme["card_bg"])
         item = self.item
         # 更新标签色条（无标签时用灰色跟随主题）
         if hasattr(self, '_label_strip'):
@@ -796,11 +919,18 @@ class ScheduleItemBar(tk.Frame):
                                   fg=theme["text_secondary"] if is_done else theme["text"])
         self.count_label.configure(bg=theme["card_bg"], fg=theme["text"])
         self.progress_canvas.configure(bg=theme["card_bg"])
-        self._draw_progress(item["current_count"], item["target_count"])
+        if self._children_count > 0 or self.item.get("is_composite"):
+            self._draw_progress(self._children_done, self._children_count)
+        else:
+            self._draw_progress(item["current_count"], item["target_count"])
         if self.plus_btn:
             self.plus_btn.configure(bg=theme["card_bg"], fg=theme["primary"])
         if self.check_label:
             self.check_label.configure(bg=theme["card_bg"], fg=theme["success"])
+        if self._timer_btn:
+            self._timer_btn.configure(bg=theme["card_bg"], fg=theme["success"])
+        if hasattr(self, '_subtask_btn') and self._subtask_btn:
+            self._subtask_btn.configure(bg=theme["card_bg"], fg=theme["primary"])
 
 
 # ═══════════════════════════════════════════
@@ -1336,11 +1466,30 @@ class SchedulePage(ttk.Frame):
             "SELECT * FROM schedule_items ORDER BY refresh_type, created_at ASC"
         )
 
-        # 处理刷新逻辑
+        # 构建父子关系映射
+        children_map: dict[int, list[dict]] = {}
+        for item in items:
+            pid = item.get("parent_id")
+            if pid:
+                children_map.setdefault(pid, []).append(item)
+
+        # 处理刷新逻辑（跳过复合父事项，其状态由子事项衍生）
         today = date.today()
         for item in items:
-            if self._needs_reset(item, today):
-                self._reset_item(item["id"], today)
+            if item.get("parent_id"):
+                # 子事项：正常刷新
+                if self._needs_reset(item, today):
+                    self._reset_item(item["id"], today)
+            elif item["id"] not in children_map:
+                # 普通事项：正常刷新
+                if self._needs_reset(item, today):
+                    self._reset_item(item["id"], today)
+            # 复合父事项：不独立刷新，但子事项刷新后需要重新检查完成状态
+
+        # 子事项刷新后，重新计算所有复合父事项的完成状态
+        for item in items:
+            if item.get("parent_id") is None and item["id"] in children_map:
+                self._sync_parent_completion(item["id"])
 
         # 重新查询以获得更新后的数据（排除已归档）
         items = self.db.fetch_all(
@@ -1349,19 +1498,27 @@ class SchedulePage(ttk.Frame):
                ORDER BY refresh_type, created_at ASC"""
         )
 
+        # 重建 children_map（刷新后数据可能变化）
+        children_map.clear()
+        for item in items:
+            pid = item.get("parent_id")
+            if pid:
+                children_map.setdefault(pid, []).append(item)
+
         # 清除旧 UI
         self._clear_sections()
         self._item_bars.clear()
 
-        # 分组渲染
+        # 分组渲染（只渲染顶层事项，子事项跟随父事项）
         grouped = {"daily": [], "weekly": [], "monthly": []}
         for item in items:
-            tp = item.get("refresh_type", "daily")
-            if tp in grouped:
-                grouped[tp].append(item)
+            if item.get("parent_id") is None:
+                tp = item.get("refresh_type", "daily")
+                if tp in grouped:
+                    grouped[tp].append(item)
 
         for key in ("daily", "weekly", "monthly"):
-            self._populate_section(key, grouped[key])
+            self._populate_section(key, grouped[key], children_map)
 
         # 递归绑定滚轮到所有板块控件
         self._bind_scroll_recursive(self._panes_inner)
@@ -1399,6 +1556,34 @@ class SchedulePage(ttk.Frame):
             (today.isoformat(), item_id),
         )
 
+    def _sync_parent_completion(self, parent_id: int):
+        """同步复合父事项的完成状态（由子事项衍生）"""
+        children = self.db.fetch_all(
+            "SELECT * FROM schedule_items WHERE parent_id = ?", (parent_id,))
+        if not children:
+            self.db.update(
+                "UPDATE schedule_items SET is_completed = 0 WHERE id = ?",
+                (parent_id,))
+            return
+
+        all_done = all(c["is_completed"] for c in children)
+        today_str = date.today().isoformat()
+
+        if all_done:
+            parent = self.db.fetch_one(
+                "SELECT is_completed FROM schedule_items WHERE id = ?", (parent_id,))
+            if parent and not parent["is_completed"]:
+                self.db.update(
+                    "UPDATE schedule_items SET is_completed = 1, updated_at = datetime('now','localtime') WHERE id = ?",
+                    (parent_id,))
+                self.db.insert(
+                    "INSERT INTO schedule_logs (item_id, done_date) VALUES (?, ?)",
+                    (parent_id, today_str))
+        else:
+            self.db.update(
+                "UPDATE schedule_items SET is_completed = 0 WHERE id = ?",
+                (parent_id,))
+
     def _clear_sections(self):
         for key, section in self._sections.items():
             # 删除内部的所有 item bar 和 label header（保留 empty label）
@@ -1410,7 +1595,8 @@ class SchedulePage(ttk.Frame):
             self._empty_labels[key].pack_forget()
         self._label_headers.clear()
 
-    def _populate_section(self, key: str, items: list[dict]):
+    def _populate_section(self, key: str, items: list[dict],
+                          children_map: dict[int, list[dict]] | None = None):
         section = self._sections[key]
         inner = section.winfo_children()[0]  # 第一个 child 是 inner Frame
 
@@ -1420,11 +1606,14 @@ class SchedulePage(ttk.Frame):
 
         self._empty_labels[key].pack_forget()
 
+        if children_map is None:
+            children_map = {}
+
         # 加载所有标签
         all_labels = self.db.fetch_all("SELECT * FROM schedule_labels ORDER BY created_at ASC")
         label_map = {lb["id"]: lb for lb in all_labels}
 
-        # 按标签分组
+        # 按标签分组（只对顶层事项分组）
         grouped: dict[int | None, list[dict]] = {}  # label_id -> items
         unlabeled: list[dict] = []
         for item in items:
@@ -1433,6 +1622,35 @@ class SchedulePage(ttk.Frame):
                 grouped.setdefault(lid, []).append(item)
             else:
                 unlabeled.append(item)
+
+        # 渲染单个事项（包括其子事项）
+        def render_item(parent_item: dict, parent_inner, is_child: bool = False):
+            item_id = parent_item["id"]
+            kids = children_map.get(item_id, [])
+            is_composite = len(kids) > 0 or parent_item.get("is_composite")
+            kids_done = sum(1 for k in kids if k.get("is_completed"))
+
+            bar = ScheduleItemBar(
+                parent_inner, parent_item, self.theme,
+                on_increment=self._on_increment,
+                on_edit=self._on_edit_item,
+                on_delete=self._on_delete_item,
+                on_reset=self._on_reset_item,
+                on_start_timer=self._on_start_timer,
+                on_undo=self._on_undo_item,
+                on_archive=self._on_archive_item,
+                on_add_subtask=self._on_add_subtask,
+                is_child=is_child,
+                children_count=len(kids),
+                children_done=kids_done,
+            )
+            bar.pack(fill=tk.X, pady=2)
+            self._item_bars[item_id] = bar
+
+            # 渲染子事项（缩进已在 ScheduleItemBar 内部处理）
+            for kid in kids:
+                kid["label_color"] = parent_item.get("label_color", "")
+                render_item(kid, parent_inner, is_child=True)
 
         # 先渲染有标签的分组
         for lid, group_items in grouped.items():
@@ -1443,20 +1661,9 @@ class SchedulePage(ttk.Frame):
 
             for item in group_items:
                 item["label_color"] = lb["color"]
-                bar = ScheduleItemBar(
-                    inner, item, self.theme,
-                    on_increment=self._on_increment,
-                    on_edit=self._on_edit_item,
-                    on_delete=self._on_delete_item,
-                    on_reset=self._on_reset_item,
-                    on_start_timer=self._on_start_timer,
-                    on_undo=self._on_undo_item,
-                    on_archive=self._on_archive_item,
-                )
-                bar.pack(fill=tk.X, pady=2)
-                self._item_bars[item["id"]] = bar
+                render_item(item, inner)
 
-        # 再渲染无标签的事项（当有标签分组存在时加一个"未分类"头）
+        # 再渲染无标签的事项
         if unlabeled:
             if grouped:
                 unlabeled_lb = {"name": "未分类", "color": self.theme["text_secondary"]}
@@ -1464,25 +1671,25 @@ class SchedulePage(ttk.Frame):
                 header.pack(fill=tk.X, pady=(6, 1))
                 self._label_headers.append(header)
             for item in unlabeled:
-                item["label_color"] = ""  # 无标签 → 灰色
-                bar = ScheduleItemBar(
-                    inner, item, self.theme,
-                    on_increment=self._on_increment,
-                    on_edit=self._on_edit_item,
-                    on_delete=self._on_delete_item,
-                    on_reset=self._on_reset_item,
-                    on_start_timer=self._on_start_timer,
-                    on_undo=self._on_undo_item,
-                    on_archive=self._on_archive_item,
-                )
-                bar.pack(fill=tk.X, pady=2)
-                self._item_bars[item["id"]] = bar
+                item["label_color"] = ""
+                render_item(item, inner)
 
     # ── 交互回调 ──
     def _on_increment(self, item_id: int):
         item = self.db.fetch_one("SELECT * FROM schedule_items WHERE id = ?", (item_id,))
         if not item:
             return
+
+        parent_id = item.get("parent_id")
+        is_child = parent_id is not None
+
+        # 检查是否为复合父事项（不能直接递增）
+        if item.get("is_composite"):
+            return  # 复合父事项不能直接递增
+        children = self.db.fetch_all(
+            "SELECT COUNT(*) as cnt FROM schedule_items WHERE parent_id = ?", (item_id,))
+        if children and children[0]["cnt"] > 0:
+            return  # 有子事项的父事项也不能直接递增
 
         current = item["current_count"] + 1
         target = item["target_count"]
@@ -1493,73 +1700,163 @@ class SchedulePage(ttk.Frame):
             "UPDATE schedule_items SET current_count = ?, is_completed = ?, updated_at = datetime('now','localtime') WHERE id = ?",
             (current, is_done, item_id),
         )
-        # 仅在目标全部达成时才记入日历（加绿深度 / 图标）
+
         if is_done:
-            self.db.insert(
-                "INSERT INTO schedule_logs (item_id, done_date) VALUES (?, ?)",
-                (item_id, today_str),
-            )
+            if is_child:
+                # 子事项完成不记入日历，检查父事项
+                self._sync_parent_completion(parent_id)
+            else:
+                # 普通事项完成记入日历
+                self.db.insert(
+                    "INSERT INTO schedule_logs (item_id, done_date) VALUES (?, ?)",
+                    (item_id, today_str),
+                )
 
         # 刷新 item bar 数据
-        updated_item = self.db.fetch_one("SELECT * FROM schedule_items WHERE id = ?", (item_id,))
-        if updated_item and item_id in self._item_bars:
-            lid = updated_item.get("label_id")
-            if lid:
-                lb = self.db.fetch_one("SELECT color FROM schedule_labels WHERE id = ?", (lid,))
-                updated_item["label_color"] = lb["color"] if lb else ""
-            else:
-                updated_item["label_color"] = ""
-            self._item_bars[item_id].update_item(updated_item)
+        self._refresh_item_bar(item_id)
+        if is_child:
+            self._refresh_item_bar(parent_id)
 
-        self._check_auto_archive(item_id)
+        if not is_child:
+            self._check_auto_archive(item_id)
         self._calendar.refresh()
+
+    def _refresh_item_bar(self, item_id: int):
+        """刷新单个 item bar 的显示"""
+        if item_id not in self._item_bars:
+            return
+        updated_item = self.db.fetch_one("SELECT * FROM schedule_items WHERE id = ?", (item_id,))
+        if not updated_item:
+            return
+        lid = updated_item.get("label_id")
+        if lid:
+            lb = self.db.fetch_one("SELECT color FROM schedule_labels WHERE id = ?", (lid,))
+            updated_item["label_color"] = lb["color"] if lb else ""
+        else:
+            updated_item["label_color"] = ""
+
+        # 获取子事项信息
+        children = self.db.fetch_all(
+            "SELECT * FROM schedule_items WHERE parent_id = ?", (item_id,))
+        kids_done = sum(1 for k in children if k.get("is_completed"))
+        self._item_bars[item_id].update_item(
+            updated_item,
+            children_count=len(children),
+            children_done=kids_done,
+        )
 
     def _on_edit_item(self, item_id: int):
         item = self.db.fetch_one("SELECT * FROM schedule_items WHERE id = ?", (item_id,))
         if not item:
             return
 
+        # 判断是否为复合父事项
+        children = self.db.fetch_all(
+            "SELECT COUNT(*) as cnt FROM schedule_items WHERE parent_id = ?", (item_id,))
+        is_composite = (children and children[0]["cnt"] > 0) or item.get("is_composite")
+        is_child = item.get("parent_id") is not None
+
         labels = self.db.fetch_all("SELECT * FROM schedule_labels ORDER BY name ASC")
         dlg = ScheduleDialog(self.winfo_toplevel(), self.theme, edit_data=item,
-                             labels=labels)
+                             labels=labels, is_subtask=is_child,
+                             is_composite=is_composite)
         if dlg.result:
             data = dlg.result
-            self.db.update(
-                """UPDATE schedule_items
-                   SET name=?, description=?, refresh_type=?, refresh_interval=?,
-                       target_count=?, mark_icon=?, mark_color=?, label_id=?,
-                       timer_minutes=?, max_completions=?,
-                       updated_at=datetime('now','localtime')
-                   WHERE id=?""",
-                (data["name"], data["description"], data["refresh_type"],
-                 data["refresh_interval"], data["target_count"],
-                 data["mark_icon"], data["mark_color"],
-                 data["label_id"], data["timer_minutes"],
-                 data["max_completions"], item_id),
-            )
+            if is_composite:
+                # 编辑复合父事项：仅更新名称/描述/图标/颜色/标签
+                self.db.update(
+                    """UPDATE schedule_items
+                       SET name=?, description=?, mark_icon=?, mark_color=?,
+                           label_id=?, updated_at=datetime('now','localtime')
+                       WHERE id=?""",
+                    (data["name"], data["description"],
+                     data["mark_icon"], data["mark_color"],
+                     data["label_id"], item_id),
+                )
+            else:
+                self.db.update(
+                    """UPDATE schedule_items
+                       SET name=?, description=?, refresh_type=?, refresh_interval=?,
+                           target_count=?, mark_icon=?, mark_color=?, label_id=?,
+                           timer_minutes=?, max_completions=?,
+                           updated_at=datetime('now','localtime')
+                       WHERE id=?""",
+                    (data["name"], data["description"], data["refresh_type"],
+                     data["refresh_interval"], data["target_count"],
+                     data["mark_icon"], data["mark_color"],
+                     data["label_id"], data["timer_minutes"],
+                     data["max_completions"], item_id),
+                )
             self._load_data()
 
     def _on_delete_item(self, item_id: int):
-        if not messagebox.askyesno("确认删除", "确定要删除这个事项吗？\n相关的完成记录也会被删除。"):
+        # 检查是否为复合父事项
+        children = self.db.fetch_all(
+            "SELECT id FROM schedule_items WHERE parent_id = ?", (item_id,))
+        if children:
+            msg = f"确定要删除这个复合事项及其 {len(children)} 个子事项吗？\n相关的完成记录也会被删除。"
+        else:
+            msg = "确定要删除这个事项吗？\n相关的完成记录也会被删除。"
+
+        if not messagebox.askyesno("确认删除", msg):
             return
+
+        if children:
+            # 先删除子事项的 logs 和子事项本身
+            for child in children:
+                cid = child["id"]
+                self.db.delete("DELETE FROM schedule_logs WHERE item_id = ?", (cid,))
+                self.db.delete("DELETE FROM schedule_items WHERE id = ?", (cid,))
         self.db.delete("DELETE FROM schedule_logs WHERE item_id = ?", (item_id,))
         self.db.delete("DELETE FROM schedule_items WHERE id = ?", (item_id,))
         self._load_data()
 
     def _on_reset_item(self, item_id: int):
         today = date.today()
-        self.db.update(
-            """UPDATE schedule_items
-               SET current_count = 0, is_completed = 0, reset_date = ?,
-                   updated_at = datetime('now','localtime')
-               WHERE id = ?""",
-            (today.isoformat(), item_id),
-        )
+        item = self.db.fetch_one("SELECT * FROM schedule_items WHERE id = ?", (item_id,))
+        if not item:
+            return
+
+        # 检查是否为复合父事项
+        children = self.db.fetch_all(
+            "SELECT id FROM schedule_items WHERE parent_id = ?", (item_id,))
+        if children:
+            # 重置所有子事项
+            for child in children:
+                self.db.update(
+                    """UPDATE schedule_items
+                       SET current_count = 0, is_completed = 0, reset_date = ?,
+                           updated_at = datetime('now','localtime')
+                       WHERE id = ?""",
+                    (today.isoformat(), child["id"]),
+                )
+            # 父事项也重置完成状态
+            self.db.update(
+                """UPDATE schedule_items
+                   SET is_completed = 0, updated_at = datetime('now','localtime')
+                   WHERE id = ?""",
+                (item_id,),
+            )
+        else:
+            self.db.update(
+                """UPDATE schedule_items
+                   SET current_count = 0, is_completed = 0, reset_date = ?,
+                       updated_at = datetime('now','localtime')
+                   WHERE id = ?""",
+                (today.isoformat(), item_id),
+            )
+            # 如果重置的是子事项，同步父事项状态
+            parent_id = item.get("parent_id")
+            if parent_id:
+                self._sync_parent_completion(parent_id)
+
         self._load_data()
 
     def _on_undo_item(self, item_id: int):
         """撤销完成：回到未完成状态，移除今天的完成日志"""
         today_str = date.today().isoformat()
+        item = self.db.fetch_one("SELECT * FROM schedule_items WHERE id = ?", (item_id,))
+
         self.db.update(
             """UPDATE schedule_items
                SET is_completed = 0, current_count = MAX(0, target_count - 1),
@@ -1571,12 +1868,30 @@ class SchedulePage(ttk.Frame):
             "DELETE FROM schedule_logs WHERE item_id = ? AND done_date = ?",
             (item_id, today_str),
         )
+
+        # 如果是子事项，同步父事项状态
+        if item and item.get("parent_id"):
+            self._sync_parent_completion(item["parent_id"])
+
         self._load_data()
 
     def _on_archive_item(self, item_id: int):
         """永久完成：归档事项"""
-        if not messagebox.askyesno("永久完成", "确定将该事项标记为永久完成？\n归档后可在「查看全部」中找到。", parent=self):
+        children = self.db.fetch_all(
+            "SELECT COUNT(*) as cnt FROM schedule_items WHERE parent_id = ?", (item_id,))
+        has_children = children and children[0]["cnt"] > 0
+        msg = "确定将该事项标记为永久完成？\n归档后可在「查看全部」中找到。"
+        if has_children:
+            msg = "确定将该复合事项及其所有子事项标记为永久完成？\n归档后可在「查看全部」中找到。"
+
+        if not messagebox.askyesno("永久完成", msg, parent=self):
             return
+
+        if has_children:
+            self.db.update(
+                "UPDATE schedule_items SET is_archived = 1, updated_at = datetime('now','localtime') WHERE parent_id = ?",
+                (item_id,),
+            )
         self.db.update(
             "UPDATE schedule_items SET is_archived = 1, updated_at = datetime('now','localtime') WHERE id = ?",
             (item_id,),
@@ -1630,6 +1945,40 @@ class SchedulePage(ttk.Frame):
     def on_save(self):
         pass
 
+    def _on_add_subtask(self, parent_id: int):
+        """为复合父事项添加子事项"""
+        parent = self.db.fetch_one("SELECT * FROM schedule_items WHERE id = ?", (parent_id,))
+        if not parent:
+            return
+
+        labels = self.db.fetch_all("SELECT * FROM schedule_labels ORDER BY name ASC")
+        # 子事项默认继承父事项的标签和颜色
+        default_data = {
+            "label_id": parent.get("label_id"),
+            "mark_color": parent.get("mark_color", "#3B82F6"),
+        }
+        dlg = ScheduleDialog(self.winfo_toplevel(), self.theme,
+                             labels=labels, parent_id=parent_id,
+                             is_subtask=True)
+        if dlg.result:
+            data = dlg.result
+            self.db.insert(
+                """INSERT INTO schedule_items
+                   (name, description, refresh_type, refresh_interval, target_count,
+                    mark_icon, mark_color, label_id, timer_minutes, max_completions,
+                    parent_id, is_composite)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (data["name"], data["description"], data["refresh_type"],
+                 data["refresh_interval"], data["target_count"],
+                 data["mark_icon"], data["mark_color"],
+                 data["label_id"], data["timer_minutes"],
+                 data["max_completions"], parent_id,
+                 data["is_composite"]),
+            )
+            # 确保父事项不处于完成状态
+            self._sync_parent_completion(parent_id)
+            self._load_data()
+
     def on_new(self):
         labels = self.db.fetch_all("SELECT * FROM schedule_labels ORDER BY name ASC")
         dlg = ScheduleDialog(self.winfo_toplevel(), self.theme, labels=labels)
@@ -1638,13 +1987,15 @@ class SchedulePage(ttk.Frame):
             self.db.insert(
                 """INSERT INTO schedule_items
                    (name, description, refresh_type, refresh_interval, target_count,
-                    mark_icon, mark_color, label_id, timer_minutes, max_completions)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    mark_icon, mark_color, label_id, timer_minutes, max_completions,
+                    parent_id, is_composite)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (data["name"], data["description"], data["refresh_type"],
                  data["refresh_interval"], data["target_count"],
                  data["mark_icon"], data["mark_color"],
                  data["label_id"], data["timer_minutes"],
-                 data["max_completions"]),
+                 data["max_completions"], data["parent_id"],
+                 data["is_composite"]),
             )
             self._load_data()
 

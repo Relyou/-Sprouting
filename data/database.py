@@ -94,6 +94,8 @@ class DatabaseManager:
             "ALTER TABLE schedule_items ADD COLUMN timer_minutes INTEGER",
             "ALTER TABLE schedule_items ADD COLUMN max_completions INTEGER",
             "ALTER TABLE schedule_items ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE schedule_items ADD COLUMN parent_id INTEGER REFERENCES schedule_items(id) ON DELETE CASCADE",
+            "ALTER TABLE schedule_items ADD COLUMN is_composite INTEGER NOT NULL DEFAULT 0",
         ]
         for sql in migrations:
             try:

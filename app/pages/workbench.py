@@ -8,6 +8,7 @@ from config import (
     FONT_TITLE, FONT_SANS, FONT_SANS_BOLD, FONT_CAPTION, FONT_MONO,
     PAD_X, PAD_Y, GAP,
 )
+from app.pages.schedule import ScheduleDialog
 
 
 class WorkbenchPage(ttk.Frame):
@@ -147,23 +148,45 @@ class WorkbenchPage(ttk.Frame):
         labels = self.db.fetch_all("SELECT * FROM schedule_labels")
         label_map = {lb["id"]: lb for lb in labels}
 
-        if not items:
+        # 构建父子关系
+        children_map: dict[int, list[dict]] = {}
+        top_items = []
+        for item in items:
+            pid = item.get("parent_id")
+            if pid:
+                children_map.setdefault(pid, []).append(item)
+            else:
+                top_items.append(item)
+
+        if not top_items and not children_map:
             tk.Label(self._left_inner, text="暂无自律事项",
                      font=FONT_CAPTION, fg=self.theme["text_secondary"],
                      bg=self.theme["bg"]).pack(pady=20)
             return
 
-        for item in items:
-            self._add_schedule_bar(item, label_map)
+        for item in top_items:
+            self._add_schedule_bar(item, label_map, children_map)
+            # 子事项缩进显示
+            for kid in children_map.get(item["id"], []):
+                self._add_schedule_bar(kid, label_map, children_map, is_child=True)
 
         self._bind_scroll_recursive(self._left_inner, self._on_left_mousewheel)
 
-    def _add_schedule_bar(self, item: dict, label_map: dict):
+    def _add_schedule_bar(self, item: dict, label_map: dict,
+                          children_map: dict | None = None, is_child: bool = False):
         bg = self.theme["card_bg"]
+        indent = 20 if is_child else 0
         bar = tk.Frame(self._left_inner, bg=bg,
                        highlightbackground=self.theme["border"],
                        highlightthickness=1)
-        bar.pack(fill=tk.X, padx=2, pady=3)
+        bar.pack(fill=tk.X, padx=(2 + indent // 2, 2), pady=3)
+
+        # 缩进占位
+        if is_child:
+            indent_frame = tk.Frame(bar, bg=bg, width=16)
+            indent_frame.pack(side=tk.LEFT, fill=tk.Y)
+            indent_frame.pack_propagate(False)
+            indent_frame.configure(height=40)
 
         # 标签色条
         lid = item.get("label_id")
@@ -181,14 +204,14 @@ class WorkbenchPage(ttk.Frame):
         name_font = FONT_SANS_BOLD
         name_fg = self.theme["text"]
         if is_done:
-            name_font = FONT_SANS_BOLD
+            name_font = FONT_SANS + ("overstrike",)
             name_fg = self.theme["text_secondary"]
 
         name_label = tk.Label(info, text=item["name"], font=name_font,
                               bg=bg, fg=name_fg, anchor=tk.W)
         name_label.pack(anchor=tk.W)
 
-        # 右侧区域（先创建，描述折叠按钮可能需要引用它）
+        # 右侧区域
         right_area = tk.Frame(bar, bg=bg)
         right_area.pack(side=tk.RIGHT, padx=(8, 8), pady=6)
 
@@ -197,7 +220,6 @@ class WorkbenchPage(ttk.Frame):
             desc_row = tk.Frame(info, bg=bg)
             desc_row.pack(anchor=tk.W, pady=(2, 0), fill=tk.X)
 
-            # 折叠三角（描述左上角，位置固定不变）
             toggle_btn = tk.Label(desc_row, text="▶", font=("Segoe UI", 10),
                                  bg=bg, fg=self.theme["text_secondary"],
                                  cursor="hand2", padx=0, pady=0)
@@ -215,33 +237,55 @@ class WorkbenchPage(ttk.Frame):
             toggle_btn.bind("<Button-1>",
                            lambda e, dl=desc_label, tb=toggle_btn: self._toggle_desc(dl, tb))
 
-        # 进度
-        current = item["current_count"]
-        target = item["target_count"]
-        tk.Label(right_area, text=f"{current}/{target}", font=FONT_MONO,
+        # 进度显示（复合事项显示子事项进度）
+        if children_map and item["id"] in children_map:
+            kids = children_map[item["id"]]
+            kids_done = sum(1 for k in kids if k.get("is_completed"))
+            count_text = f"{kids_done}/{len(kids)}"
+        elif item.get("is_composite"):
+            count_text = "0/0"
+        else:
+            current = item["current_count"]
+            target = item["target_count"]
+            count_text = f"{current}/{target}"
+        tk.Label(right_area, text=count_text, font=FONT_MONO,
                  bg=bg, fg=self.theme["text"]).pack(side=tk.LEFT, padx=(0, 8))
 
-        # 计时按钮
-        timer_minutes = item.get("timer_minutes")
-        if timer_minutes:
-            start_btn = tk.Label(right_area, text="▶ 开始", font=FONT_CAPTION,
-                                 bg=self.theme["primary"], fg="#FFFFFF",
-                                 padx=12, pady=3, cursor="hand2")
-            start_btn.pack(side=tk.LEFT, padx=(0, 8))
-            start_btn.bind("<Button-1>",
-                           lambda e, iid=item["id"], tm=timer_minutes:
-                           self._start_timer(iid, tm))
+        # 复合父事项显示子事项添加按钮，普通事项显示计时/+按钮
+        is_composite = (children_map and item["id"] in children_map) or item.get("is_composite")
 
-        # + 按钮 / ✓ 标记
-        if is_done:
-            tk.Label(right_area, text="✓", font=("Segoe UI", 14, "bold"),
-                     bg=bg, fg=self.theme["success"]).pack(side=tk.LEFT)
+        if not is_composite:
+            # 计时按钮
+            timer_minutes = item.get("timer_minutes")
+            if timer_minutes:
+                start_btn = tk.Label(right_area, text="▶ 开始", font=FONT_CAPTION,
+                                     bg=self.theme["primary"], fg="#FFFFFF",
+                                     padx=12, pady=3, cursor="hand2")
+                start_btn.pack(side=tk.LEFT, padx=(0, 8))
+                start_btn.bind("<Button-1>",
+                               lambda e, iid=item["id"], tm=timer_minutes:
+                               self._start_timer(iid, tm))
+
+            # + 按钮 / ✓ 标记
+            if is_done:
+                tk.Label(right_area, text="✓", font=("Segoe UI", 14, "bold"),
+                         bg=bg, fg=self.theme["success"]).pack(side=tk.LEFT)
+            else:
+                plus_btn = tk.Label(right_area, text="＋", font=("Segoe UI", 14, "bold"),
+                                    bg=bg, fg=self.theme["primary"],
+                                    cursor="hand2", padx=4)
+                plus_btn.pack(side=tk.LEFT)
+                plus_btn.bind("<Button-1>", lambda e, iid=item["id"]: self._inc_schedule(iid))
         else:
-            plus_btn = tk.Label(right_area, text="＋", font=("Segoe UI", 14, "bold"),
-                                bg=bg, fg=self.theme["primary"],
-                                cursor="hand2", padx=4)
-            plus_btn.pack(side=tk.LEFT)
-            plus_btn.bind("<Button-1>", lambda e, iid=item["id"]: self._inc_schedule(iid))
+            # 复合父事项：始终显示子事项添加按钮，完成时额外显示 ✓
+            if is_done:
+                tk.Label(right_area, text="✓", font=("Segoe UI", 14, "bold"),
+                         bg=bg, fg=self.theme["success"]).pack(side=tk.LEFT, padx=(0, 4))
+            subtask_btn = tk.Label(right_area, text="＋子事项", font=("Segoe UI", 11, "bold"),
+                                   bg=bg, fg=self.theme["primary"],
+                                   cursor="hand2", padx=2)
+            subtask_btn.pack(side=tk.LEFT)
+            subtask_btn.bind("<Button-1>", lambda e, iid=item["id"]: self._on_add_subtask(iid))
 
         self._schedule_bars.append(bar)
 
@@ -250,6 +294,17 @@ class WorkbenchPage(ttk.Frame):
         from datetime import date as dt_date
         item = self.db.fetch_one("SELECT * FROM schedule_items WHERE id = ?", (item_id,))
         if not item:
+            return
+
+        parent_id = item.get("parent_id")
+        is_child = parent_id is not None
+
+        # 复合父事项不能直接递增
+        if item.get("is_composite"):
+            return
+        children = self.db.fetch_all(
+            "SELECT COUNT(*) as cnt FROM schedule_items WHERE parent_id = ?", (item_id,))
+        if children and children[0]["cnt"] > 0:
             return
 
         current = item["current_count"] + 1
@@ -265,11 +320,71 @@ class WorkbenchPage(ttk.Frame):
             (current, is_done, item_id),
         )
         if is_done:
-            self.db.insert(
-                "INSERT INTO schedule_logs (item_id, done_date) VALUES (?, ?)",
-                (item_id, today_str),
-            )
+            if is_child:
+                # 子事项不记入日历，同步父事项
+                self._sync_parent_completion(parent_id)
+            else:
+                self.db.insert(
+                    "INSERT INTO schedule_logs (item_id, done_date) VALUES (?, ?)",
+                    (item_id, today_str),
+                )
         self.refresh()
+
+    def _sync_parent_completion(self, parent_id: int):
+        """同步复合父事项的完成状态"""
+        children = self.db.fetch_all(
+            "SELECT * FROM schedule_items WHERE parent_id = ?", (parent_id,))
+        if not children:
+            self.db.update(
+                "UPDATE schedule_items SET is_completed = 0 WHERE id = ?",
+                (parent_id,))
+            return
+
+        all_done = all(c["is_completed"] for c in children)
+        today_str = date.today().isoformat()
+
+        if all_done:
+            parent = self.db.fetch_one(
+                "SELECT is_completed FROM schedule_items WHERE id = ?", (parent_id,))
+            if parent and not parent["is_completed"]:
+                self.db.update(
+                    "UPDATE schedule_items SET is_completed = 1, updated_at = datetime('now','localtime') WHERE id = ?",
+                    (parent_id,))
+                self.db.insert(
+                    "INSERT INTO schedule_logs (item_id, done_date) VALUES (?, ?)",
+                    (parent_id, today_str))
+        else:
+            self.db.update(
+                "UPDATE schedule_items SET is_completed = 0 WHERE id = ?",
+                (parent_id,))
+
+    def _on_add_subtask(self, parent_id: int):
+        """为复合父事项添加子事项"""
+        parent = self.db.fetch_one("SELECT * FROM schedule_items WHERE id = ?", (parent_id,))
+        if not parent:
+            return
+
+        labels = self.db.fetch_all("SELECT * FROM schedule_labels ORDER BY name ASC")
+        dlg = ScheduleDialog(self.winfo_toplevel(), self.theme,
+                             labels=labels, parent_id=parent_id,
+                             is_subtask=True)
+        if dlg.result:
+            data = dlg.result
+            self.db.insert(
+                """INSERT INTO schedule_items
+                   (name, description, refresh_type, refresh_interval, target_count,
+                    mark_icon, mark_color, label_id, timer_minutes, max_completions,
+                    parent_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (data["name"], data["description"], data["refresh_type"],
+                 data["refresh_interval"], data["target_count"],
+                 data["mark_icon"], data["mark_color"],
+                 data["label_id"], data["timer_minutes"],
+                 data["max_completions"], parent_id),
+            )
+            # 确保父事项不处于完成状态
+            self._sync_parent_completion(parent_id)
+            self.refresh()
 
     def _load_todos(self):
         for w in self._right_inner.winfo_children():
@@ -485,6 +600,9 @@ class WorkbenchPage(ttk.Frame):
             return
         from datetime import date as dt_date
         target = item["target_count"]
+        parent_id = item.get("parent_id")
+        is_child = parent_id is not None
+
         self.db.update(
             """UPDATE schedule_items
                SET current_count=?, is_completed=1,
@@ -492,10 +610,13 @@ class WorkbenchPage(ttk.Frame):
                WHERE id=?""",
             (target, item_id),
         )
-        self.db.insert(
-            "INSERT INTO schedule_logs (item_id, done_date) VALUES (?, ?)",
-            (item_id, dt_date.today().isoformat()),
-        )
+        if is_child:
+            self._sync_parent_completion(parent_id)
+        else:
+            self.db.insert(
+                "INSERT INTO schedule_logs (item_id, done_date) VALUES (?, ?)",
+                (item_id, dt_date.today().isoformat()),
+            )
 
     def _stop_timer(self):
         """停止计时器"""
